@@ -5,14 +5,21 @@ on:
   push:
     branches: ["main"]
 
+concurrency:
+  group: rakazo-android-apk
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   build-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -31,6 +38,7 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -39,19 +47,27 @@ jobs:
         working-directory: apps/mobile
         run: pnpm exec expo prebuild --platform android --no-install
 
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
       - name: Build release APK
         working-directory: apps/mobile/android
+        env:
+          GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon --stacktrace --console=plain --max-workers=2
 
-      - name: Find APK
-        id: apk
+      - name: Verify APK
         working-directory: apps/mobile
         run: |
           APK=$(find android/app/build/outputs/apk/release -type f -name "*.apk" | head -n 1)
           test -n "$APK"
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
+          test -s "$APK"
+          echo "APK=$APK"
+          sha256sum "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -59,3 +75,4 @@ jobs:
           name: Rakazo-Mobile-APK
           path: apps/mobile/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+          retention-days: 14
